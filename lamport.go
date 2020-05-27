@@ -64,5 +64,6 @@ func RunRandomWithLamportClocks() {
 }
 
 func main() {
-	RunRandomWithLamportClocks()
+	// RunRandomWithLamportClocks()
+	RunLeaderElectionCompleteGraph(NumProcs)
 }
