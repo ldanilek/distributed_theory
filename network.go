@@ -51,13 +51,16 @@ func (m MessageWithContent) String() string {
 	return fmt.Sprintf("\"%s\"", m.Content)
 }
 
-// Generic processor. e.g. it can wrap a sub-algorithm with lamport clocks.
+// Generic processor.
+// Examples:
+// It can send random messages to its neighbors.
+// It can wrap a sub-algorithm with lamport clocks.
 type Process interface {
 	Id() ProcessID
 	Step(
 		send func(Message),
 		receive func() Message,
-	) (done bool)
+	)
 }
 
 func Log(p Process, s string) {
@@ -74,12 +77,15 @@ type DirectConnectedProcess struct {
 	InChan chan Message
 }
 
-func (p *DirectConnectedProcess) ConnectedStep() bool {
-	return p.P.Step(p.Send, p.Receive)
+func (p *DirectConnectedProcess) ConnectedStep() {
+	p.P.Step(p.Send, p.Receive)
 }
 
+// Actually infinite loops
+// TODO: track whether channels are empty, and ask process if it's idle.
 func (p *DirectConnectedProcess) RunTillDone() {
-	for !p.ConnectedStep() {
+	for {
+		p.ConnectedStep() 
 		time.Sleep(1) // yield
 	}
 	Log(p.P, "done")

@@ -21,8 +21,8 @@ func (m LamportMessage) String() string {
 func (p *LamportProcess) Step(
 	send func(Message),
 	receive func() Message,
-) (done bool) {
-	return p.Process.Step(
+) {
+	p.Process.Step(
 		func(m Message) {
 			send(LamportMessage{Message: m, Clock: p.Clock})
 			p.Clock++
@@ -48,7 +48,7 @@ func (p *LamportProcess) Step(
 
 const NumProcs = 10
 
-func main() {
+func RunRandomWithLamportClocks() {
 	processes := make([]Process, 0, NumProcs)
 	for i := 0; i < NumProcs; i++ {
 		processes = append(processes, &LamportProcess{
@@ -61,4 +61,8 @@ func main() {
 	}
 	c := CreateCompleteGraph(processes)
 	c.RunTillDone()
+}
+
+func main() {
+	RunRandomWithLamportClocks()
 }

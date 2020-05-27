@@ -50,7 +50,7 @@ func (p *RandomProcess) Id() ProcessID {
 func (p *RandomProcess) Step(
 	send func(Message),
 	receive func() Message,
-) bool {
+) {
 	switch rand.Intn(4) {
 	case 1:
 		m := NewMessageWithContent(p.Id(), p.PickNeighbor())
@@ -58,5 +58,4 @@ func (p *RandomProcess) Step(
 	case 2, 3:
 		receive()
 	}
-	return newContent() > 1000
 }
