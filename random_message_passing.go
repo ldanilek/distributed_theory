@@ -1,12 +1,25 @@
-package distributed_theory
+package main
 
 import (
 	"fmt"
 	"math/rand"
+	"sync"
 )
 
-func MessageWithRandomContent(from ProcessID, to ProcessID) Message {
-	contents := fmt.Sprintf("%d", rand.Intn(1000))
+var (
+	incrementingContent int
+	incrementingContentMutex sync.Mutex
+)
+
+func newContent() int {
+	incrementingContentMutex.Lock()
+	defer incrementingContentMutex.Unlock()
+	incrementingContent++
+	return incrementingContent
+}
+
+func NewMessageWithContent(from ProcessID, to ProcessID) Message {
+	contents := fmt.Sprintf("%d", newContent())
 	return MessageWithContent{
 		Message: RoutedMessage{
 			From: from,
@@ -16,30 +29,34 @@ func MessageWithRandomContent(from ProcessID, to ProcessID) Message {
 	}
 }
 
-func (p *BaseProcess) PickNeighbor() ProcessID {
-	nbr := p.Id
-	for nbr == p.Id {
-		nbr = ProcessID(rand.Intn(len(p.OutChans)))
-	}
+type RandomProcess struct {
+	IncrementalID ProcessID
+	// Neighbors have ids [0, NeighborCount)
+	NeighborCount int
 }
 
-func RunRandomStep(p Process) {
+func (p *RandomProcess) PickNeighbor() ProcessID {
+	nbr := p.Id()
+	for nbr == p.Id() {
+		nbr = ProcessID(rand.Intn(p.NeighborCount))
+	}
+	return nbr
+}
+
+func (p *RandomProcess) Id() ProcessID {
+	return p.IncrementalID
+}
+
+func (p *RandomProcess) Step(
+	send func(Message),
+	receive func() Message,
+) bool {
 	switch rand.Intn(4) {
-	case 0:
-		p.Compute()
 	case 1:
-		p.Send(nbr)
+		m := NewMessageWithContent(p.Id(), p.PickNeighbor())
+		send(m)
 	case 2, 3:
-		p.Receive()
+		receive()
 	}
-}
-
-const MaxSteps = 100
-
-func RunRandomSteps(p Process) {
-	steps := rand.Intn(MaxSteps)
-	for i := 0; i < steps; i++ {
-		p.RunRandomStep()
-		time.Sleep(1)  // yield
-	}
+	return newContent() > 1000
 }

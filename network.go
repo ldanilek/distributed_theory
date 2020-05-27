@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"math/rand"
 	"sync"
 	"time"
 )
@@ -47,7 +46,7 @@ type MessageWithContent struct {
 
 func (m MessageWithContent) String() string {
 	if m.Message != nil {
-		return fmt.Sprintf("\"%s\" %s", m.Content, m.Message)
+		return fmt.Sprintf("\"%s\"\t%s", m.Content, m.Message)
 	}
 	return fmt.Sprintf("\"%s\"", m.Content)
 }
@@ -61,19 +60,29 @@ type Process interface {
 	) (done bool)
 }
 
-type Cluster []ConnectedProcess
+func Log(p Process, s string) {
+	fmt.Printf("%s: %s\n", p.Id(), s)
+}
 
 // A Process that knows how to communicate with other processes.
-// It ignores the `send` and `receive`.
+// It knows how to `send` and `receive`.
+// It should always be the topmost process, so it is technically not a Process,
+// to avoid embedding it and causing confusion.
 type DirectConnectedProcess struct {
-	Process
+	P Process
 	OutChans map[ProcessID]chan Message
 	InChan chan Message
 }
-var _ ConnectedProcess = (*DirectConnectedProcess)(nil)
 
-func (p *DirectConnectedProcess) ConnectedStep() {
-	return p.Step(p.Send, p.Receive)
+func (p *DirectConnectedProcess) ConnectedStep() bool {
+	return p.P.Step(p.Send, p.Receive)
+}
+
+func (p *DirectConnectedProcess) RunTillDone() {
+	for !p.ConnectedStep() {
+		time.Sleep(1) // yield
+	}
+	Log(p.P, "done")
 }
 
 func (p *DirectConnectedProcess) Send(m Message) {
@@ -85,6 +94,7 @@ func (p *DirectConnectedProcess) Send(m Message) {
 	}
 	select {
 	case outChan <- m:
+		Log(p.P, fmt.Sprintf("sent %s", m))
 		// sent
 	default:
 		// dropped because direct channel is full
@@ -94,48 +104,77 @@ func (p *DirectConnectedProcess) Send(m Message) {
 func (p *DirectConnectedProcess) Receive() Message {
 	select {
 	case m := <-p.InChan:
+		Log(p.P, fmt.Sprintf("received %s", m))
 		return m
 	default:
 		return nil
 	}
 }
 
-func (c Cluster) RunRandomSteps() {
+func (p *DirectConnectedProcess) Id() ProcessID {
+	return p.P.Id()
+}
+
+type Cluster map[ProcessID]*DirectConnectedProcess
+
+func (c Cluster) RunTillDone() {
 	var wg sync.WaitGroup
 	wg.Add(len(c))
 	for _, process := range c {
 		process := process
 		go func() {
 			defer wg.Done()
-			process.RunRandomSteps()
+			process.RunTillDone()
 		}()
 	}
 	wg.Wait()
 }
 
-func (c Cluster) CreateProcessConnectedToOthers() *Process {
-	outChans := make(map[ProcessID]chan Message, len(c))
-	for _, p := range c {
-		outChans[p.Id] = p.InChan
-	}
-	inChan := make(chan Message, 1000)
-	newProcess := &Process{
-		Id: ProcessID(len(c)),
-		OutChans: outChans,
-		InChan: inChan,
-	}
-	for _, p := range c {
-		p.OutChans[newProcess.Id] = inChan
-	}
-	return newProcess
+type TopologyNode struct{
+	Subprocess Process
+	Neighbors map[ProcessID]struct{}
 }
 
-func CreateProcesses(count int) Cluster {
-	c := Cluster(make([]*Process, 0, count))
-	for i := 0; i<count; i++ {
-		p := c.CreateProcessConnectedToOthers()
-		c = append(c, p)
+type Topology map[ProcessID]TopologyNode
+
+func CreateCluster(topo Topology) Cluster {
+	c := make(Cluster, len(topo))
+	for id, topoNode := range topo {
+		if id != topoNode.Subprocess.Id() {
+			panic(fmt.Sprintf("invalid topology: %s has subprocess %s", id, topoNode.Subprocess.Id()))
+		}
+		inChan := make(chan Message, 1000)
+		c[id] = &DirectConnectedProcess{
+			P: topoNode.Subprocess,
+			InChan: inChan,
+		}
+	}
+	for id, topoNode := range topo {
+		outChans := make(map[ProcessID]chan Message, len(topoNode.Neighbors))
+		for pid := range topoNode.Neighbors {
+			if id == pid {
+				// Skip links to self.
+				continue
+			}
+			outChans[pid] = c[pid].InChan
+		}
+		c[id].OutChans = outChans
 	}
 	return c
+}
+
+func CreateCompleteGraph(processes []Process) Cluster {
+	allPIDs := make(map[ProcessID]struct{}, len(processes))
+	for _, p := range processes {
+		allPIDs[p.Id()] = struct{}{}
+	}
+	topo := make(Topology, len(processes))
+	for _, p := range processes {
+		topo[p.Id()] = TopologyNode{
+			Subprocess: p,
+			Neighbors: allPIDs,
+		}
+	}
+	return CreateCluster(topo)
 }
 
