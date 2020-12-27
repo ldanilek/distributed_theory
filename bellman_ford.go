@@ -26,15 +26,15 @@ func NewBellmanFordTopologyNode(
 	neighbors map[ProcessID]struct{},
 ) TopologyNode {
 	return TopologyNode{
-		Subprocess: &MultiTCPProcess{
-			Process: &BellmanFordProcess{
+		Subprocess: &BellmanFordProcess{
+			Process: &MultiTCPProcess{
 				Process: subprocess,
-				shortestNextSteps: map[ProcessID]NextStep{
-					subprocess.Id(): NextStep{steppingStone: subprocess.Id()},
-				},
-				neighbors: neighbors,
-				deliveryQueue: make(chan RoutedMessage, innerDeliveryQueueSize),
 			},
+			shortestNextSteps: map[ProcessID]NextStep{
+				subprocess.Id(): NextStep{steppingStone: subprocess.Id()},
+			},
+			neighbors: neighbors,
+			deliveryQueue: make(chan RoutedMessage, innerDeliveryQueueSize),
 		},
 		Neighbors: neighbors,
 	}

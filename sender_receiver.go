@@ -40,6 +40,7 @@ func (p *ConversationProcess) sendMessage(send func(RoutedMessage)) {
 		From: p.Id(),
 		To: p.FriendID,
 	})
+	p.PhraseIndex += 1
 }
 
 func (p *ConversationProcess) Step(send func(RoutedMessage), receive func() *RoutedMessage) {
@@ -56,14 +57,12 @@ func (p *ConversationProcess) Step(send func(RoutedMessage), receive func() *Rou
 	}
 	contentMessage, ok := received.Message.(ConversationMessage)
 	if !ok {
-		panic(fmt.Sprintf("conversation expects phrase"))
+		panic(fmt.Sprintf("conversation expects phrase, not %T %s", received.Message, received.Message))
 	}
 	Log(p, fmt.Sprintf("received phrase '%s'", contentMessage))
-	p.PhraseIndex += 1
 	p.sendMessage(send)
-	if p.PhraseIndex == len(p.Phrases) - 1 {
+	if p.PhraseIndex >= len(p.Phrases) {
 		Log(p, "conversation complete")
-		p.PhraseIndex += 1
 	}
 }
 

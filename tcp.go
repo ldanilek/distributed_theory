@@ -7,7 +7,7 @@ import (
 type SequenceNumber int
 
 type TCPOutboundProcess struct {
-	Process
+	SenderBufferProcess
 	DestID ProcessID
 	// Unlimited size
 	ToSend []TCPDataMessage
@@ -17,7 +17,7 @@ type TCPOutboundProcess struct {
 const InboundProcessBufferSize = 5
 
 type TCPInboundProcess struct {
-	Process
+	ReceiverBufferProcess
 	SourceID ProcessID
 	// Limited to size InboundProcessBufferSize
 	Received []TCPDataMessage
@@ -46,13 +46,10 @@ func (m TCPDataMessage) String() string {
 }
 
 func (p *TCPOutboundProcess) innerStep(send func(RoutedMessage)) {
-	if p.Process == nil {
-		return
-	}
-	p.Process.Step(
+	p.SenderBufferProcess.Step(
 		func(m RoutedMessage) {
 			if m.From != p.Id() || m.To != p.DestID {
-				panic(fmt.Sprintf("TCP cannot send message %v", m))
+				panic(fmt.Sprintf("TCP cannot send message %s", m))
 			}
 			p.ToSend = append(p.ToSend, TCPDataMessage{
 				Message: m.Message,
@@ -102,21 +99,19 @@ func (p *TCPOutboundProcess) Step(
 }
 
 func (p *TCPInboundProcess) innerStep(send func(RoutedMessage)) {
-	if p.Process == nil {
-		return
-	}
-	p.Process.Step(
+	p.ReceiverBufferProcess.Step(
 		func(m RoutedMessage) {
 			panic("inner process of TCPInbound cannot send messages")
 		},
 		func() *RoutedMessage {
 			if len(p.Received) > 0 {
-				return &RoutedMessage{
-					Message: p.Received[0],
+				m := &RoutedMessage{
+					Message: p.Received[0].Message,
 					From: p.SourceID,
 					To: p.Id(),
 				}
 				p.Received = p.Received[1:]
+				return m
 			}
 			return nil
 		},
@@ -197,7 +192,7 @@ func (p *ReceiverBufferProcess) Step(
 ) {
 	received := receive()
 	if received != nil {
-		p.received = append(p.received, received)
+		p.received = append(p.received, *received)
 	}
 }
 
@@ -234,11 +229,11 @@ func (p *MultiTCPProcess) connect(pid ProcessID) {
 		p.inboundProcs = make(map[ProcessID]*TCPInboundProcess)
 	}
 	p.outboundProcs[pid] = &TCPOutboundProcess{
-		Process: &SenderBufferProcess{ID: p.Id()},
+		SenderBufferProcess: SenderBufferProcess{ID: p.Id()},
 		DestID: pid,
 	}
 	p.inboundProcs[pid] = &TCPInboundProcess{
-		Process: &ReceiverBufferProcess{ID: p.Id()},
+		ReceiverBufferProcess: ReceiverBufferProcess{ID: p.Id()},
 		SourceID: pid,
 	}
 }
@@ -261,12 +256,12 @@ func (p *MultiTCPProcess) Step(
 			if !ok {
 				panic(fmt.Sprintf("Received ACK from %s before sending any messages", received.From))
 			}
-			outboundProc.Process.(*SenderBufferProcess).pushInput(received)
+			outboundProc.SenderBufferProcess.pushInput(*received)
 		case TCPDataMessage:
 			if _, ok := p.inboundProcs[received.From]; !ok {
 				p.connect(received.From)
 			}
-			p.inboundProcs[received.From].Process.(*ReceiverBufferProcess).pushInput(received)
+			p.inboundProcs[received.From].ReceiverBufferProcess.pushInput(*received)
 		default:
 			panic(fmt.Sprintf("Received unexpected message type %T %v", received.Message, received.Message))
 		}
@@ -285,12 +280,12 @@ func (p *MultiTCPProcess) Step(
 			if _, ok := p.outboundProcs[m.To]; !ok {
 				p.connect(m.To)
 			}
-			sender := p.outboundProcs[m.To].Process.(*SenderBufferProcess)
+			sender := &p.outboundProcs[m.To].SenderBufferProcess
 			sender.toSend = append(sender.toSend, m)
 		},
 		func() *RoutedMessage {
 			for _, inboundProc := range p.inboundProcs {
-				buffer := inboundProc.Process.(*ReceiverBufferProcess)
+				buffer := &inboundProc.ReceiverBufferProcess
 				if len(buffer.received) > 0 {
 					m := buffer.received[0]
 					buffer.received = buffer.received[1:]

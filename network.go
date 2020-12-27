@@ -90,7 +90,7 @@ func (p *DirectConnectedProcess) Step() {
 func (p *DirectConnectedProcess) RunTillDone() {
 	for {
 		p.Step() 
-		time.Sleep(1) // yield
+		time.Sleep(10 * time.Millisecond) // yield
 	}
 	Log(p.P, "done")
 }
