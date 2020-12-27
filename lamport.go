@@ -19,51 +19,56 @@ func (m LamportMessage) String() string {
 }
 
 func (p *LamportProcess) Step(
-	send func(Message),
-	receive func() Message,
+	send func(RoutedMessage),
+	receive func() *RoutedMessage,
 ) {
 	p.Process.Step(
-		func(m Message) {
-			send(LamportMessage{Message: m, Clock: p.Clock})
+		func(m RoutedMessage) {
+			send(RoutedMessage{
+				Message: LamportMessage{Message: m.Message, Clock: p.Clock},
+				From: m.From,
+				To: m.To,
+			})
 			p.Clock++
 		},
-		func() Message {
+		func() *RoutedMessage {
 			mRaw := receive()
 			if mRaw == nil {
 				return nil
 			}
-			m, ok := mRaw.(LamportMessage)
+			m, ok := mRaw.Message.(LamportMessage)
 			if !ok {
-				fmt.Printf("dropping %s\n", mRaw)
+				panic(fmt.Sprintf("unexpected lamport type %T", mRaw.Message))
 			}
 			clock := p.Clock
 			if clock < m.Clock {
 				clock = m.Clock
 			}
 			p.Clock = clock + 1
-			return m.Message
+			return &RoutedMessage{
+				Message: m.Message,
+				From: mRaw.From,
+				To: mRaw.To,
+			}
 		},
 	)
 }
 
-const NumProcs = 10
+type RandomWithLamportScenario struct {
+	NumProcs int
+}
 
-func RunRandomWithLamportClocks() {
-	processes := make([]Process, 0, NumProcs)
-	for i := 0; i < NumProcs; i++ {
+func (s RandomWithLamportScenario) Network() Topology {
+	processes := make([]Process, 0, s.NumProcs)
+	for i := 0; i < s.NumProcs; i++ {
 		processes = append(processes, &LamportProcess{
 			Process: &RandomProcess{
 				IncrementalID: ProcessID(i),
-				NeighborCount: NumProcs,
+				NeighborCount: s.NumProcs,
 			},
 			Clock: 0,
 		})
 	}
-	c := CreateCompleteGraph(processes)
-	c.RunTillDone()
+	return CompleteTopology(processes)
 }
 
-func main() {
-	// RunRandomWithLamportClocks()
-	RunLeaderElectionCompleteGraph(NumProcs)
-}

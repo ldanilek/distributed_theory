@@ -24,33 +24,32 @@ func (m LeaderMessage) String() string {
 	return fmt.Sprintf("Message: %s | IdList: %v", m.Message, m.IdList)
 }
 
-func (p *LeaderElectionProcess) sendListToNeighbors(send func(Message)) {
+func (p *LeaderElectionProcess) sendListToNeighbors(send func(RoutedMessage)) {
 	for neighbor := range p.Neighbors {
 		if neighbor == p.Id() { continue }
-		routed_msg := RoutedMessage {
-			From : p.Id(),
+		send(RoutedMessage{
+			Message: LeaderMessage{IdList: p.IdList},
+			From: p.Id(),
 			To: neighbor,
-		}
-		send(LeaderMessage {Message : routed_msg, IdList: p.IdList})
+		})
 	}
 }
 
-func (p *LeaderElectionProcess) receiveLeaderMessage(receive func() Message) bool {
-	var received_msg Message
-	for received_msg == nil {
-		received_msg = receive()
+func (p *LeaderElectionProcess) receiveLeaderMessage(receive func() *RoutedMessage) bool {
+	received := receive()
+	if received == nil {
+		return false
 	}
-	leader_msg := received_msg.(LeaderMessage)
+	leaderMessage := received.Message.(LeaderMessage)
 	// update state
-	len_id_orig := len(p.IdList)
-	for id := range leader_msg.IdList {
+	originalIDListLen := len(p.IdList)
+	for id := range leaderMessage.IdList {
 		p.IdList[id] = struct{}{}
 	}
-	return len(p.IdList) != len_id_orig
+	return len(p.IdList) != originalIDListLen
 }
 
-
-func (p *LeaderElectionProcess) Step(send func(Message), receive func() Message) {
+func (p *LeaderElectionProcess) Step(send func(RoutedMessage), receive func() *RoutedMessage) {
 
 	if p.LeaderFound {
 		return
@@ -80,24 +79,26 @@ func (p *LeaderElectionProcess) Step(send func(Message), receive func() Message)
 	Log(p, fmt.Sprintf("found leader %s", p.LeaderId))
 }
 
-func RunLeaderElectionCompleteGraph (graphsize int) {
-	processes := make([]Process, 0, graphsize)
+type LeaderElectionCompleteScenario struct {
+	GraphSize int
+}
+
+func (s LeaderElectionCompleteScenario) Network() Topology {
+	processes := make([]Process, 0, s.GraphSize)
 	allNodes := make(map[ProcessID] struct{})
-	for i := 0; i < graphsize; i++ {
+	for i := 0; i < s.GraphSize; i++ {
 		allNodes[ProcessID(i)] = struct{}{}
 	}
-	for i := 0; i < graphsize; i++ {
+	for i := 0; i < s.GraphSize; i++ {
 		processes = append(processes, &LeaderElectionProcess{
 			Process: &RandomProcess{
 				IncrementalID: ProcessID(i),
-				NeighborCount: graphsize,
+				NeighborCount: s.GraphSize,
 			},
-			GraphSize: graphsize,
+			GraphSize: s.GraphSize,
 			Neighbors: allNodes,
 		})
 	}
-	c := CreateCompleteGraph(processes)
-	c.RunTillDone()
+	return CompleteTopology(processes)
 }
-
 

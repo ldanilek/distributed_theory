@@ -12,12 +12,15 @@ func (id ProcessID) String() string {
 	return fmt.Sprintf("pid:%d", int(id))
 }
 
+// When wrapping, the inner message contains "data" or "contents", while the
+// outer message adds "metadata".
+// For example, a message containing random data might be wrapped inside
+// one with a lamport clock, which would be inside a RoutedMessage.
 type Message interface {
 	String() string
-	Source() ProcessID
-	Dest() ProcessID
 }
 
+// Always the outermost wrapping of a message, so it can be sent over the wire.
 type RoutedMessage struct {
 	Message
 	From ProcessID
@@ -29,14 +32,6 @@ func (m RoutedMessage) String() string {
 		return fmt.Sprintf("(%s) %s->%s", m.Message, m.From, m.To)
 	}
 	return fmt.Sprintf("%s->%s", m.From, m.To)
-}
-
-func (m RoutedMessage) Dest() ProcessID {
-	return m.To
-}
-
-func (m RoutedMessage) Source() ProcessID {
-	return m.From
 }
 
 type MessageWithContent struct {
@@ -55,11 +50,13 @@ func (m MessageWithContent) String() string {
 // Examples:
 // It can send random messages to its neighbors.
 // It can wrap a sub-algorithm with lamport clocks.
+// When wrapping, the inner process does more business logic,
+// while the outer does more bookkeeping.
 type Process interface {
 	Id() ProcessID
 	Step(
-		send func(Message),
-		receive func() Message,
+		send func(RoutedMessage),
+		receive func() *RoutedMessage,
 	)
 }
 
@@ -73,45 +70,55 @@ func Log(p Process, s string) {
 // to avoid embedding it and causing confusion.
 type DirectConnectedProcess struct {
 	P Process
-	OutChans map[ProcessID]chan Message
-	InChan chan Message
+	OutChans map[ProcessID]chan RoutedMessage
+	InChan chan RoutedMessage
 }
 
-func (p *DirectConnectedProcess) ConnectedStep() {
-	p.P.Step(p.Send, p.Receive)
+func (p *DirectConnectedProcess) Step() {
+	p.P.Step(
+		func(m RoutedMessage) {
+			p.Send(m)
+		},
+		func() *RoutedMessage {
+			return p.Receive()
+		},
+	)
 }
 
 // Actually infinite loops
 // TODO: track whether channels are empty, and ask process if it's idle.
 func (p *DirectConnectedProcess) RunTillDone() {
 	for {
-		p.ConnectedStep() 
+		p.Step() 
 		time.Sleep(1) // yield
 	}
 	Log(p.P, "done")
 }
 
-func (p *DirectConnectedProcess) Send(m Message) {
+func (p *DirectConnectedProcess) Send(m RoutedMessage) {
+	if m.From != p.Id() {
+		panic(fmt.Sprintf("%s cannot send a message that is 'from' %s", p.Id(), m.From))
+	}
 	// validate neighbor
-	nbr := m.Dest()
+	nbr := m.To
 	outChan, ok := p.OutChans[nbr]
 	if !ok {
 		panic(fmt.Sprintf("%d does not exist as a neighbor of %d", nbr, p.Id()))
 	}
 	select {
 	case outChan <- m:
-		Log(p.P, fmt.Sprintf("sent %s", m))
+		// Log(p.P, fmt.Sprintf("sent %s", m))
 		// sent
 	default:
 		// dropped because direct channel is full
 	}
 }
 
-func (p *DirectConnectedProcess) Receive() Message {
+func (p *DirectConnectedProcess) Receive() *RoutedMessage {
 	select {
 	case m := <-p.InChan:
-		Log(p.P, fmt.Sprintf("received %s", m))
-		return m
+		// Log(p.P, fmt.Sprintf("received %s", m))
+		return &m
 	default:
 		return nil
 	}
@@ -119,6 +126,21 @@ func (p *DirectConnectedProcess) Receive() Message {
 
 func (p *DirectConnectedProcess) Id() ProcessID {
 	return p.P.Id()
+}
+
+type SimpleProcess struct {
+	ID ProcessID
+}
+
+func (p SimpleProcess) Id() ProcessID {
+	return p.ID
+}
+
+func (p SimpleProcess) Step(send func(RoutedMessage), receive func() *RoutedMessage) {
+	received := receive()
+	if received != nil {
+		panic(fmt.Sprintf("simple process can't receive anything. received %T %v", received, received))
+	}
 }
 
 type Cluster map[ProcessID]*DirectConnectedProcess
@@ -143,20 +165,24 @@ type TopologyNode struct{
 
 type Topology map[ProcessID]TopologyNode
 
+const (
+	directChannelBuffer = 1000
+)
+
 func CreateCluster(topo Topology) Cluster {
 	c := make(Cluster, len(topo))
 	for id, topoNode := range topo {
 		if id != topoNode.Subprocess.Id() {
 			panic(fmt.Sprintf("invalid topology: %s has subprocess %s", id, topoNode.Subprocess.Id()))
 		}
-		inChan := make(chan Message, 1000)
+		inChan := make(chan RoutedMessage, directChannelBuffer)
 		c[id] = &DirectConnectedProcess{
 			P: topoNode.Subprocess,
 			InChan: inChan,
 		}
 	}
 	for id, topoNode := range topo {
-		outChans := make(map[ProcessID]chan Message, len(topoNode.Neighbors))
+		outChans := make(map[ProcessID]chan RoutedMessage, len(topoNode.Neighbors))
 		for pid := range topoNode.Neighbors {
 			if id == pid {
 				// Skip links to self.
@@ -169,7 +195,7 @@ func CreateCluster(topo Topology) Cluster {
 	return c
 }
 
-func CreateCompleteGraph(processes []Process) Cluster {
+func CompleteTopology(processes []Process) Topology {
 	allPIDs := make(map[ProcessID]struct{}, len(processes))
 	for _, p := range processes {
 		allPIDs[p.Id()] = struct{}{}
@@ -181,6 +207,17 @@ func CreateCompleteGraph(processes []Process) Cluster {
 			Neighbors: allPIDs,
 		}
 	}
-	return CreateCluster(topo)
+	return topo
 }
 
+func CreateCompleteGraph(processes []Process) Cluster {
+	return CreateCluster(CompleteTopology(processes))
+}
+
+type Scenario interface {
+	Network() Topology
+}
+
+func RunScenario(scenario Scenario) {
+	CreateCluster(scenario.Network()).RunTillDone()
+}

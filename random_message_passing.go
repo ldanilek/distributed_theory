@@ -18,14 +18,14 @@ func newContent() int {
 	return incrementingContent
 }
 
-func NewMessageWithContent(from ProcessID, to ProcessID) Message {
+func NewMessageWithContent(from ProcessID, to ProcessID) RoutedMessage {
 	contents := fmt.Sprintf("%d", newContent())
-	return MessageWithContent{
-		Message: RoutedMessage{
-			From: from,
-			To: to,
+	return RoutedMessage{
+		Message: MessageWithContent{
+			Content: contents,
 		},
-		Content: contents,
+		From: from,
+		To: to,
 	}
 }
 
@@ -48,8 +48,8 @@ func (p *RandomProcess) Id() ProcessID {
 }
 
 func (p *RandomProcess) Step(
-	send func(Message),
-	receive func() Message,
+	send func(RoutedMessage),
+	receive func() *RoutedMessage,
 ) {
 	switch rand.Intn(4) {
 	case 1:
